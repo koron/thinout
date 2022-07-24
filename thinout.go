@@ -54,8 +54,12 @@ func thinout(dst io.Writer, src io.Reader, filter Filter) error {
 }
 
 func main() {
-	var fixes []int
-	denominator := flag.Float64("d", 10.0, "denominator of the rate for thin out")
+	var (
+		fixes []int
+		rate  float64
+	)
+
+	flag.Float64Var(&rate, "r", 0.1, "rate to output [0.0,1.0]")
 	flag.Func("f", "specify fixed line number (allow multi-times)", func(s string) error {
 		n, err := strconv.Atoi(s)
 		if err != nil {
@@ -69,7 +73,9 @@ func main() {
 	})
 	flag.Parse()
 
-	rate := 1.0 / *denominator
+	if rate < 0 || rate > 1 {
+		log.Fatalf("output rate (-r) out of range [0.0,1.0]: %e", rate)
+	}
 	sort.Ints(fixes)
 
 	err := thinout(os.Stdout, os.Stdin, func(n int, s string) bool {
