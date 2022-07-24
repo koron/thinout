@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"errors"
 	"flag"
 	"fmt"
@@ -11,6 +12,8 @@ import (
 	"os"
 	"sort"
 	"strconv"
+	"strings"
+	"time"
 )
 
 type Filter func(int, string) bool
@@ -53,29 +56,87 @@ func thinout(dst io.Writer, src io.Reader, filter Filter) error {
 	}
 }
 
-func main() {
-	var (
-		fixes []int
-		rate  float64
-	)
+type seedOpt struct {
+	time bool
+	seed int64
+}
 
-	flag.Float64Var(&rate, "r", 0.1, "rate to output [0.0,1.0]")
-	flag.Func("f", "specify fixed line number (allow multi-times)", func(s string) error {
-		n, err := strconv.Atoi(s)
+func (so *seedOpt) String() string {
+	if so.time {
+		return "time"
+	}
+	return strconv.FormatInt(so.seed, 10)
+}
+
+func (so *seedOpt) Set(s string) error {
+	switch s {
+	case "time":
+		*so = seedOpt{true, 0}
+		return nil
+	default:
+		seed, err := strconv.ParseInt(s, 10, 64)
 		if err != nil {
 			return err
+		}
+		*so = seedOpt{false, seed}
+		return nil
+	}
+}
+
+func (so *seedOpt) rand() *rand.Rand {
+	seed := so.seed
+	if so.time {
+		seed = time.Now().UnixMilli()
+	}
+	return rand.New(rand.NewSource(seed))
+}
+
+type intArray []int
+
+func (ia intArray) String() string {
+	bb := &bytes.Buffer{}
+	for i, v := range ia {
+		if i != 0 {
+			bb.WriteRune(',')
+		}
+		bb.WriteString(strconv.Itoa(v))
+	}
+	return bb.String()
+}
+
+func (ia *intArray) Set(s string) error {
+	max := strings.Count(s, ",") + 1
+	vals := make([]int, 0, max)
+	for _, t := range strings.SplitN(s, ",", max) {
+		n, err := strconv.Atoi(t)
+		if err != nil {
+			return fmt.Errorf("number required: %w", err)
 		}
 		if n <= 0 {
 			return fmt.Errorf("line number to fix must be >= 1, but got %d", n)
 		}
-		fixes = append(fixes, n)
-		return nil
-	})
+		vals = append(vals, n)
+	}
+	*ia = append(*ia, vals...)
+	return nil
+}
+
+func main() {
+	var (
+		rate  float64
+		seed  seedOpt
+		fixes intArray
+	)
+
+	flag.Float64Var(&rate, "r", 0.1, "rate to output [0.0,1.0]")
+	flag.Var(&seed, "s", `seed for random numbers: "time" or int64 (default: 0)`)
+	flag.Var(&fixes, "f", `specify fixed line numbers, comma separated`)
 	flag.Parse()
 
 	if rate < 0 || rate > 1 {
 		log.Fatalf("output rate (-r) out of range [0.0,1.0]: %e", rate)
 	}
+	rnd := seed.rand()
 	sort.Ints(fixes)
 
 	err := thinout(os.Stdout, os.Stdin, func(n int, s string) bool {
@@ -83,7 +144,7 @@ func main() {
 			fixes = fixes[1:]
 			return true
 		}
-		return rand.Float64() < rate
+		return rnd.Float64() < rate
 	})
 	if err != nil {
 		log.Fatal(err)
